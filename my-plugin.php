@@ -17,6 +17,8 @@ require_once plugin_dir_path(__FILE__) . 'includes/api/class-bulk-featured-image
 require_once plugin_dir_path(__FILE__) . 'includes/services/class-ip-blocker.php';
 require_once plugin_dir_path(__FILE__) . 'includes/services/class-traffic-logger.php';
 require_once plugin_dir_path(__FILE__) . 'includes/services/class-inject-content.php';
+require_once plugin_dir_path(__FILE__) . 'includes/services/class-gsc.php';
+require_once plugin_dir_path(__FILE__) . 'includes/services/class-ga4.php';
 
 My_Inject_Content::init();
 require_once plugin_dir_path(__FILE__) . 'includes/api/class-ip-blocker-api.php';
@@ -156,6 +158,137 @@ add_action('admin_init', function () {
   }
 });
 
+
+// Xu ly GSC schedule settings
+add_action('admin_init', function () {
+  if (!isset($_POST['xavia_gsc_schedule_save'])) return;
+  check_admin_referer('xavia_gsc_schedule_save');
+
+  $enabled = !empty($_POST['gsc_report_enabled']);
+  $time    = sanitize_text_field($_POST['gsc_report_time'] ?? '08:00');
+  $days    = (int) ($_POST['gsc_report_days'] ?? 7);
+  if (!preg_match('/^\d{2}:\d{2}$/', $time)) $time = '08:00';
+  if (!in_array($days, [7, 28, 90])) $days = 7;
+
+  update_option('xavia_gsc_report_enabled', $enabled);
+  update_option('xavia_gsc_report_time',    $time);
+  update_option('xavia_gsc_report_days',    $days);
+
+  $hook = 'xavia_gsc_daily_report';
+  $ts   = wp_next_scheduled($hook);
+  if ($ts) wp_unschedule_event($ts, $hook);
+
+  if ($enabled) {
+    $tz   = wp_timezone();
+    $next = new DateTime('today ' . $time, $tz);
+    if ($next->getTimestamp() <= time()) $next->modify('+1 day');
+    wp_schedule_event($next->getTimestamp(), 'daily', $hook);
+  }
+
+  wp_redirect(admin_url('admin.php?page=xavia-gsc&tab=report&schedule_saved=1'));
+  exit;
+});
+
+// Xu ly scan ngay
+add_action('admin_init', function () {
+  if (!isset($_POST['xavia_gsc_scan_now'])) return;
+  check_admin_referer('xavia_gsc_scan_now');
+  $days = (int) ($_POST['gsc_scan_days'] ?? get_option('xavia_gsc_report_days', 7));
+  if (!in_array($days, [7, 28, 90])) $days = 7;
+  My_GSC::send_report($days);
+  wp_redirect(admin_url('admin.php?page=xavia-gsc&tab=sc_overview&scan_sent=1'));
+  exit;
+});
+
+// Cron handler
+add_action('xavia_gsc_daily_report', function () {
+  $days = (int) get_option('xavia_gsc_report_days', 7);
+  My_GSC::send_report($days);
+});
+
+// Xu ly GA4 check tag
+add_action('admin_init', function () {
+  if (!isset($_POST['xavia_ga4_check_tag'])) return;
+  check_admin_referer('xavia_ga4_check_tag');
+  $mid  = My_GA4::get_measurement_id();
+  $res  = wp_remote_get(home_url(), ['timeout' => 10, 'sslverify' => false]);
+  $body = is_wp_error($res) ? '' : wp_remote_retrieve_body($res);
+  $found = $mid && $body && strpos($body, $mid) !== false;
+  set_transient('xavia_ga4_tag_check', $found ? 1 : 0, 5 * MINUTE_IN_SECONDS);
+  wp_redirect(admin_url('admin.php?page=xavia-ga4&tab=settings'));
+  exit;
+});
+
+// Xu ly GA4 clear cache
+add_action('admin_init', function () {
+  if (!isset($_POST['xavia_ga4_clear_cache'])) return;
+  check_admin_referer('xavia_ga4_clear_cache');
+  global $wpdb;
+  $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_xavia_ga4_%' OR option_name LIKE '_transient_timeout_xavia_ga4_%'");
+  wp_redirect(admin_url('admin.php?page=xavia-ga4&tab=settings&cache_cleared=1'));
+  exit;
+});
+
+// Xu ly GA4 settings
+add_action('admin_init', function () {
+  if (!isset($_POST['xavia_ga4_save'])) return;
+  check_admin_referer('xavia_ga4_save');
+  My_GA4::save_property_id($_POST['ga4_property_id'] ?? '');
+  My_GA4::save_measurement_id($_POST['ga4_measurement_id'] ?? '');
+  wp_redirect(admin_url('admin.php?page=xavia-ga4&tab=settings&ga4_saved=1'));
+  exit;
+});
+
+// Inject GA4 tracking tag vao <head>
+add_action('wp_head', ['My_GA4', 'inject_tag']);
+
+// Xu ly GA4 schedule settings
+add_action('admin_init', function () {
+  if (!isset($_POST['xavia_ga4_schedule_save'])) return;
+  check_admin_referer('xavia_ga4_schedule_save');
+
+  $enabled = !empty($_POST['ga4_report_enabled']);
+  $time    = sanitize_text_field($_POST['ga4_report_time'] ?? '08:00');
+  $days    = (int) ($_POST['ga4_report_days'] ?? 7);
+  if (!preg_match('/^\d{2}:\d{2}$/', $time)) $time = '08:00';
+  if (!in_array($days, [7, 28, 90])) $days = 7;
+
+  update_option('xavia_ga4_report_enabled', $enabled);
+  update_option('xavia_ga4_report_time',    $time);
+  update_option('xavia_ga4_report_days',    $days);
+
+  $hook = 'xavia_ga4_daily_report';
+  $ts   = wp_next_scheduled($hook);
+  if ($ts) wp_unschedule_event($ts, $hook);
+
+  if ($enabled) {
+    $tz   = wp_timezone();
+    $next = new DateTime('today ' . $time, $tz);
+    if ($next->getTimestamp() <= time()) $next->modify('+1 day');
+    wp_schedule_event($next->getTimestamp(), 'daily', $hook);
+  }
+
+  wp_redirect(admin_url('admin.php?page=xavia-ga4&tab=report&schedule_saved=1'));
+  exit;
+});
+
+// Xu ly GA4 scan ngay
+add_action('admin_init', function () {
+  if (!isset($_POST['xavia_ga4_scan_now'])) return;
+  check_admin_referer('xavia_ga4_scan_now');
+  $days = (int) ($_POST['ga4_scan_days'] ?? get_option('xavia_ga4_report_days', 7));
+  if (!in_array($days, [7, 28, 90])) $days = 7;
+  My_GA4::send_report($days);
+  wp_redirect(admin_url('admin.php?page=xavia-ga4&tab=ga4_overview&scan_sent=1'));
+  exit;
+});
+
+// Cron handler GA4
+add_action('xavia_ga4_daily_report', function () {
+  $days = (int) get_option('xavia_ga4_report_days', 7);
+  My_GA4::send_report($days);
+});
+
 // Xử lý xóa / bật-tắt chat_id
 add_action('admin_init', function () {
   if (isset($_POST['xavia_remove_chatid'])) {
@@ -226,8 +359,11 @@ add_action('transition_post_status', function ($new_status, $old_status, $post) 
   $is_bulk = is_admin() && !empty($_REQUEST['bulk_edit']);
 
   if ($new_status === 'publish' && $old_status !== 'publish') {
+    set_transient('xavia_new_post_' . $post->ID, 1, 5); // danh dau vua publish, suppress edit lien tiep
     Xavia_Notify_Queue::push('new', ['title' => $post->post_title, 'url' => get_permalink($post->ID)]);
   } elseif ($new_status === 'publish' && $old_status === 'publish') {
+    // Bo qua neu post vua duoc publish (Gutenberg gui 2 request lien tiep khi tao bai moi)
+    if (get_transient('xavia_new_post_' . $post->ID)) return;
     $type = $is_bulk ? 'bulk_edit' : 'edit';
     Xavia_Notify_Queue::push($type, ['title' => $post->post_title, 'url' => get_permalink($post->ID)]);
   } elseif ($new_status === 'future' && $old_status !== 'future') {

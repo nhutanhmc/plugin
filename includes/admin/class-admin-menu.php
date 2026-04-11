@@ -68,6 +68,24 @@ class Xavia_Admin_Menu {
       'xavia-ip-blocker',
       [self::class, 'render_ip_blocker']
     );
+
+    add_submenu_page(
+      'xavia-dashboard',
+      'Search Console',
+      'Search Console',
+      'manage_options',
+      'xavia-gsc',
+      [self::class, 'render_gsc']
+    );
+
+    add_submenu_page(
+      'xavia-dashboard',
+      'Analytics GA4',
+      'Analytics GA4',
+      'manage_options',
+      'xavia-ga4',
+      [self::class, 'render_ga4']
+    );
   }
 
   public static function render_dashboard() {
@@ -96,5 +114,13 @@ class Xavia_Admin_Menu {
 
   public static function render_ip_blocker() {
     require_once plugin_dir_path(__FILE__) . 'views/ip-blocker.php';
+  }
+
+  public static function render_gsc() {
+    require_once plugin_dir_path(__FILE__) . 'views/gsc.php';
+  }
+
+  public static function render_ga4() {
+    require_once plugin_dir_path(__FILE__) . 'views/ga4.php';
   }
 }
